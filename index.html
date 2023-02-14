@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nostr Raw Caster</title>
+    <script src="https://unpkg.com/nostr-tools@1.4.0/lib/nostr.bundle.js"></script>
+  </head>
+
+  <body>
+    <form id="form" action="">
+      <table>
+        <tr>
+          <td>secret key(hex/nsec)</td>
+          <td><input id="sk" /></td>
+        </tr>
+        <tr>
+          <td>relay</td>
+          <td><input id="relay" /></td>
+        </tr>
+        <tr>
+          <td>json</td>
+          <td><textarea id="json"></textarea></td>
+        </tr>
+      </table>
+
+      <div><button type="submit">Send</button></div>
+    </form>
+
+    <script>
+      document.getElementById("form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        let sk = document.getElementById("sk").value;
+        if (sk.startsWith("nsec")) {
+          sk = NostrTools.nip19.decode(sk).data;
+        }
+        const pk = NostrTools.getPublicKey(sk);
+
+        const relay = NostrTools.relayInit(
+          document.getElementById("relay").value
+        );
+
+        relay.on("connect", () => {
+          console.log("connected to relay.");
+        });
+        relay.on("disconnect", () => {
+          console.log("disconnected from relay.");
+        });
+        relay.on("error", () => {
+          alert(
+            "Failed to connect to relay. Please check if the URL is correct."
+          );
+        });
+
+        await relay.connect();
+
+        const sub = relay.sub([{ authors: [pk] }]);
+        sub.on("event", (ev) => console.log("got event:", ev));
+        sub.on("eose", () => {
+          console.log("subscription closed.");
+          sub.unsub();
+        });
+
+        const event = JSON.parse(document.getElementById("json").value);
+        const keysMustExist = ["kind", "tags", "content"];
+        if (keysMustExist.some((k) => !event.hasOwnProperty(k))) {
+          alert("'kind', 'tags', 'content' must exist in the json.");
+          return;
+        }
+
+        const republishingEvent = {
+          kind: event.kind,
+          content: event.content,
+          tags: event.tags,
+          created_at: Math.floor(Date.now() / 1000),
+          pubkey: pk,
+        };
+        republishingEvent.id = NostrTools.getEventHash(republishingEvent);
+        republishingEvent.sig = NostrTools.signEvent(republishingEvent, sk);
+
+        const pub = relay.publish(republishingEvent);
+
+        pub.on("ok", () => {
+          console.log("published successfully.");
+        });
+        pub.on("failed", () => {
+          console.warn("failed to publish.");
+        });
+      });
+    </script>
+  </body>
+</html>
